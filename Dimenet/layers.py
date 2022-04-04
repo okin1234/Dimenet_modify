@@ -6,6 +6,7 @@ from typing import Callable
 
 import numpy as np
 import torch
+from torch import nn
 from torch.nn import Embedding, Linear
 from torch_scatter import scatter
 from torch_sparse import SparseTensor
@@ -31,7 +32,8 @@ class Envelope(torch.nn.Module):
         x_pow_p0 = x.pow(p - 1)
         x_pow_p1 = x_pow_p0 * x
         x_pow_p2 = x_pow_p1 * x
-        return 1. / x + a * x_pow_p0 + b * x_pow_p1 + c * x_pow_p2
+        env_val = 1. / x + a * x_pow_p0 + b * x_pow_p1 + c * x_pow_p2
+        return torch.where(x < 1, env_val, torch.zeros_like(x))
 
 
 class BesselBasisLayer(torch.nn.Module):
@@ -156,8 +158,8 @@ class InteractionBlock(torch.nn.Module):
         self.lin_kj = Linear(hidden_channels, hidden_channels)
         self.lin_ji = Linear(hidden_channels, hidden_channels)
 
-        self.lin_down = nn.Linear(hidden_channels, num_bilinear, bias=False)
-        self.lin_up = nn.Linear(num_bilinear, hidden_channels, bias=False)
+        self.lin_down = Linear(hidden_channels, num_bilinear, bias=False)
+        self.lin_up = Linear(num_bilinear, hidden_channels, bias=False)
         
         self.layers_before_skip = torch.nn.ModuleList([
             ResidualLayer(hidden_channels, act) for _ in range(num_before_skip)
@@ -201,7 +203,7 @@ class InteractionBlock(torch.nn.Module):
         
         x_kj = x_kj * rbf
         x_kj = self.act(self.lin_down(x_kj))
-        x_kj = x_kj[idx_kj] * sdf
+        x_kj = x_kj[idx_kj] * sbf
     
         x_kj = scatter(x_kj, idx_ji, dim=0, dim_size=x.size(0))
         x_kj = self.act(self.lin_up(x_kj))
@@ -223,7 +225,7 @@ class OutputBlock(torch.nn.Module):
         self.output_init = output_init
         
         self.lin_rbf = Linear(num_radial, hidden_channels, bias=False)
-        self.lin_up = nn.Linear(hidden_channels, out_emb_channels, bias=False)
+        self.lin_up = Linear(hidden_channels, out_emb_channels, bias=False)
         
         self.lins = torch.nn.ModuleList()
         for _ in range(num_layers):

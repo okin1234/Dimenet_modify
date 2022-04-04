@@ -6,6 +6,7 @@ from typing import Callable
 
 import numpy as np
 import torch
+from torch import nn
 from torch.nn import Embedding, Linear
 from torch_scatter import scatter
 from torch_sparse import SparseTensor
@@ -108,10 +109,11 @@ class DimeNet(torch.nn.Module):
 
         return col, row, idx_i, idx_j, idx_k, idx_kj, idx_ji
 
-    def forward(self, z, pos, batch=None):
-        """"""
-        #edge_index = radius_graph(pos, r=self.cutoff, batch=batch,
-        #                          max_num_neighbors=self.max_num_neighbors)
+    def forward(self, batch_data):
+        z, pos, batch = batch_data.x, batch_data.pos, batch_data.batch
+        
+        edge_index = radius_graph(pos, r=self.cutoff, batch=batch,
+                                  max_num_neighbors=self.max_num_neighbors)
 
         i, j, idx_i, idx_j, idx_k, idx_kj, idx_ji = self.triplets(
             edge_index, num_nodes=z.size(0))
