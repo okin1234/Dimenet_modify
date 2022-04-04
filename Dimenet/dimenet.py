@@ -10,8 +10,6 @@ from torch.nn import Embedding, Linear
 from torch_scatter import scatter
 from torch_sparse import SparseTensor
 
-from torch_geometric.data import Dataset, download_url
-from torch_geometric.data.makedirs import makedirs
 from torch_geometric.nn import radius_graph
 
 from torch_geometric.nn.inits import glorot_orthogonal
@@ -27,7 +25,9 @@ class DimeNet(torch.nn.Module):
         hidden_channels (int): Hidden embedding size.
         out_channels (int): Size of each output sample.
         num_blocks (int): Number of building blocks.
-        num_bilinear (int): Size of the bilinear layer tensor.
+        num_bilinear (int): Size of embedded SBF and Size of scale down size of interaction layer.
+        basis_emb_size (int): In interaction layer, the first embedding dim of RBF and SBF.
+        out_emb_channels (int): In output layer, the size of scale up layer.
         num_spherical (int): Number of spherical harmonics.
         num_radial (int): Number of radial basis functions.
         cutoff: (float, optional): Cutoff distance for interatomic
@@ -45,14 +45,16 @@ class DimeNet(torch.nn.Module):
             output blocks. (default: :obj:`3`)
         act: (Callable, optional): The activation funtion.
             (default: :obj:`swish`)
+        output_init: Initialization method for the output layer (last layer in output block) (zeros or GlorotOrthogonal)
     """
 
     def __init__(self, hidden_channels: int, out_channels: int,
-                 num_blocks: int, num_bilinear: int, num_spherical: int,
+                 num_blocks: int, num_bilinear: int, basis_emb_size: int, 
+                 out_emb_channels: int, num_spherical: int,
                  num_radial, cutoff: float = 5.0, max_num_neighbors: int = 32,
                  envelope_exponent: int = 5, num_before_skip: int = 1,
                  num_after_skip: int = 2, num_output_layers: int = 3,
-                 act: Callable = swish):
+                 act: Callable = swish, output_init='zeors'):
         super().__init__()
 
         self.cutoff = cutoff
@@ -66,13 +68,11 @@ class DimeNet(torch.nn.Module):
         self.emb = EmbeddingBlock(num_radial, hidden_channels, act)
 
         self.output_blocks = torch.nn.ModuleList([
-            OutputBlock(num_radial, hidden_channels, out_channels,
-                        num_output_layers, act) for _ in range(num_blocks + 1)
+            OutputBlock(num_radial, hidden_channels, out_emb_channels, out_channels, num_output_layers, act) for _ in range(num_blocks + 1)
         ])
 
         self.interaction_blocks = torch.nn.ModuleList([
-            InteractionBlock(hidden_channels, num_bilinear, num_spherical,
-                             num_radial, num_before_skip, num_after_skip, act)
+            InteractionBlock(hidden_channels, num_bilinear, basis_emb_size, num_spherical, num_radial, num_before_skip, num_after_skip, act)
             for _ in range(num_blocks)
         ])
 
@@ -85,22 +85,6 @@ class DimeNet(torch.nn.Module):
             out.reset_parameters()
         for interaction in self.interaction_blocks:
             interaction.reset_parameters()
-
-    def make_training_data():
-        model = DimeNet(hidden_channels=128, out_channels=1, num_blocks=6,
-                        num_bilinear=8, num_spherical=7, num_radial=6,
-                        cutoff=5.0, envelope_exponent=5, num_before_skip=1,
-                        num_after_skip=2, num_output_layers=3)
-
-
-        # Use the same random seed as the official DimeNet` implementation.
-        random_state = np.random.RandomState(seed=42)
-        perm = torch.from_numpy(random_state.permutation(np.arange(130831)))
-        train_idx = perm[:110000]
-        val_idx = perm[110000:120000]
-        test_idx = perm[120000:]
-
-        return model, (dataset[train_idx], dataset[val_idx], dataset[test_idx])
 
     def triplets(self, edge_index, num_nodes):
         row, col = edge_index  # j->i
@@ -126,8 +110,8 @@ class DimeNet(torch.nn.Module):
 
     def forward(self, z, pos, batch=None):
         """"""
-        edge_index = radius_graph(pos, r=self.cutoff, batch=batch,
-                                  max_num_neighbors=self.max_num_neighbors)
+        #edge_index = radius_graph(pos, r=self.cutoff, batch=batch,
+        #                          max_num_neighbors=self.max_num_neighbors)
 
         i, j, idx_i, idx_j, idx_k, idx_kj, idx_ji = self.triplets(
             edge_index, num_nodes=z.size(0))
@@ -137,9 +121,9 @@ class DimeNet(torch.nn.Module):
 
         # Calculate angles.
         pos_i = pos[idx_i]
-        pos_ji, pos_ki = pos[idx_j] - pos_i, pos[idx_k] - pos_i
-        a = (pos_ji * pos_ki).sum(dim=-1)
-        b = torch.cross(pos_ji, pos_ki).norm(dim=-1)
+        pos_ji, pos_jk = pos[idx_i] - pos[idx_j], pos[idx_k] - pos[idx_j]
+        a = (pos_ji * pos_jk).sum(dim=-1)
+        b = torch.cross(pos_ji, pos_jk).norm(dim=-1)
         angle = torch.atan2(b, a)
 
         rbf = self.rbf(dist)

@@ -141,22 +141,24 @@ class ResidualLayer(torch.nn.Module):
 
 
 class InteractionBlock(torch.nn.Module):
-    def __init__(self, hidden_channels, num_bilinear, num_spherical,
+    def __init__(self, hidden_channels, num_bilinear, basis_emb_size, num_spherical,
                  num_radial, num_before_skip, num_after_skip, act=swish):
         super().__init__()
         self.act = act
 
-        self.lin_rbf = Linear(num_radial, hidden_channels, bias=False)
-        self.lin_sbf = Linear(num_spherical * num_radial, num_bilinear,
-                              bias=False)
+        self.lin_rbf1 = Linear(num_radial, basis_emb_size, bias=False)
+        self.lin_rbf2 = Linear(basis_emb_size, hidden_channels, bias=False)
+        self.lin_sbf1 = Linear(num_spherical * num_radial, basis_emb_size, bias=False)
+        self.lin_sbf2 = Linear(basis_emb_size, num_bilinear, bias=False)
+        
 
         # Dense transformations of input messages.
         self.lin_kj = Linear(hidden_channels, hidden_channels)
         self.lin_ji = Linear(hidden_channels, hidden_channels)
 
-        self.W = torch.nn.Parameter(
-            torch.Tensor(hidden_channels, num_bilinear, hidden_channels))
-
+        self.lin_down = nn.Linear(hidden_channels, num_bilinear, bias=False)
+        self.lin_up = nn.Linear(num_bilinear, hidden_channels, bias=False)
+        
         self.layers_before_skip = torch.nn.ModuleList([
             ResidualLayer(hidden_channels, act) for _ in range(num_before_skip)
         ])
@@ -168,13 +170,19 @@ class InteractionBlock(torch.nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        glorot_orthogonal(self.lin_rbf.weight, scale=2.0)
-        glorot_orthogonal(self.lin_sbf.weight, scale=2.0)
+        glorot_orthogonal(self.lin_rbf1.weight, scale=2.0)
+        glorot_orthogonal(self.lin_rbf2.weight, scale=2.0)
+        glorot_orthogonal(self.lin_sbf1.weight, scale=2.0)
+        glorot_orthogonal(self.lin_sbf2.weight, scale=2.0)
+        
         glorot_orthogonal(self.lin_kj.weight, scale=2.0)
         self.lin_kj.bias.data.fill_(0)
         glorot_orthogonal(self.lin_ji.weight, scale=2.0)
         self.lin_ji.bias.data.fill_(0)
-        self.W.data.normal_(mean=0, std=2 / self.W.size(0))
+        
+        glorot_orthogonal(self.lin_down.weight, scale=2.0)
+        glorot_orthogonal(self.lin_up.weight, scale=2.0)
+        
         for res_layer in self.layers_before_skip:
             res_layer.reset_parameters()
         glorot_orthogonal(self.lin.weight, scale=2.0)
@@ -183,15 +191,21 @@ class InteractionBlock(torch.nn.Module):
             res_layer.reset_parameters()
 
     def forward(self, x, rbf, sbf, idx_kj, idx_ji):
-        rbf = self.lin_rbf(rbf)
-        sbf = self.lin_sbf(sbf)
-
+        rbf = self.lin_rbf1(rbf)
+        rbf = self.lin_rbf2(rbf)
+        sbf = self.lin_sbf1(sbf)
+        sbf = self.lin_sbf2(sbf)
+        
         x_ji = self.act(self.lin_ji(x))
         x_kj = self.act(self.lin_kj(x))
+        
         x_kj = x_kj * rbf
-        x_kj = torch.einsum('wj,wl,ijl->wi', sbf, x_kj[idx_kj], self.W)
+        x_kj = self.act(self.lin_down(x_kj))
+        x_kj = x_kj[idx_kj] * sdf
+    
         x_kj = scatter(x_kj, idx_ji, dim=0, dim_size=x.size(0))
-
+        x_kj = self.act(self.lin_up(x_kj))
+        
         h = x_ji + x_kj
         for layer in self.layers_before_skip:
             h = layer(h)
@@ -203,16 +217,19 @@ class InteractionBlock(torch.nn.Module):
 
 
 class OutputBlock(torch.nn.Module):
-    def __init__(self, num_radial, hidden_channels, out_channels, num_layers,
-                 act=swish):
+    def __init__(self, num_radial, hidden_channels, out_emb_channels, out_channels, num_layers, act=swish, output_init='zeros'):
         super().__init__()
         self.act = act
-
+        self.output_init = output_init
+        
         self.lin_rbf = Linear(num_radial, hidden_channels, bias=False)
+        self.lin_up = nn.Linear(hidden_channels, out_emb_channels, bias=False)
+        
         self.lins = torch.nn.ModuleList()
         for _ in range(num_layers):
-            self.lins.append(Linear(hidden_channels, hidden_channels))
-        self.lin = Linear(hidden_channels, out_channels, bias=False)
+            self.lins.append(Linear(out_emb_channels, out_emb_channels))
+            
+        self.lin = Linear(out_emb_channels, out_channels, bias=False)
 
         self.reset_parameters()
 
@@ -221,11 +238,18 @@ class OutputBlock(torch.nn.Module):
         for lin in self.lins:
             glorot_orthogonal(lin.weight, scale=2.0)
             lin.bias.data.fill_(0)
-        self.lin.weight.data.fill_(0)
+        
+        if self.output_init == 'zeros':
+            self.lin.weight.data.fill_(0)
+        if self.output_init == 'GlorotOrthogonal':
+            glorot_orthogonal(self.lin.weight, scale=2.0)
 
     def forward(self, x, rbf, i, num_nodes=None):
         x = self.lin_rbf(rbf) * x
         x = scatter(x, i, dim=0, dim_size=num_nodes)
+        
+        x = self.lin_up(x)
+        
         for lin in self.lins:
             x = self.act(lin(x))
         return self.lin(x)
