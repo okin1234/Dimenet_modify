@@ -133,7 +133,7 @@ class DimeNet(torch.nn.Module):
         sbf = self.sbf(dist, angle, idx_kj)
 
         # Embedding block.
-        x = self.emb(z, rbf, i, j)
+        x = self.emb(z, rbf, i, j, state)
         P = self.output_blocks[0](x, rbf, i, num_nodes=pos.size(0))
 
         # Interaction blocks.

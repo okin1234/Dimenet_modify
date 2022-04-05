@@ -102,14 +102,14 @@ class SphericalBasisLayer(torch.nn.Module):
 
 
 class EmbeddingBlock(torch.nn.Module):
-    def __init__(self, num_radial, hidden_channels, act=swish, num_state):
+    def __init__(self, num_radial, hidden_channels, act=swish, num_state=1):
         super().__init__()
         self.act = act
 
         self.emb = Embedding(95, hidden_channels)
         self.lin_rbf = Linear(num_radial, hidden_channels)
-        self.lin_state_1 = Linear(num_state, hidden_channels/2)
-        self.lin_state_2 = Linear(hidden_channels/2, hidden_channels)
+        self.lin_state_1 = Linear(num_state, hidden_channels)
+        self.lin_state_2 = Linear(hidden_channels, hidden_channels)
         self.lin = Linear(4 * hidden_channels, hidden_channels)
 
         self.reset_parameters()
@@ -124,7 +124,10 @@ class EmbeddingBlock(torch.nn.Module):
     def forward(self, x, rbf, i, j, state):
         x = self.emb(x)
         rbf = self.act(self.lin_rbf(rbf))
-        state = self.act(self.lin_state_2(self.act(self.lin_state_1(state))))
+        state=state*torch.ones_like(i)
+        state=state.transpose(1,0)
+        state = self.act(self.lin_state_1(state))
+        state = self.act(self.lin_state_2(state))
         return self.act(self.lin(torch.cat([x[i], x[j], rbf, state], dim=-1)))
 
 

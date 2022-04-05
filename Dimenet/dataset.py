@@ -112,7 +112,7 @@ def make_graph_datas(num_xtb_data, num_g09_data, load=False, random_state=1000, 
             rdkit_data = data_to_onehot(rdkit_data)
             
         for xyz in tqdm(g09_xyz_list):
-            state_attributes = [1] # xtb=0, g09=1
+            state_attributes = [[1.]] # xtb=0, g09=1
             name = os.path.basename(xyz).split(".xyz")[0]
             data_type = 'g09'
             if with_rdkit:
@@ -210,7 +210,7 @@ def make_graph_datas(num_xtb_data, num_g09_data, load=False, random_state=1000, 
         for xyz in tqdm(xtb_xyz_list):
             key_name = os.path.basename(xyz).split(".xyz")[0]+"_xtb"
             if key_name in xtb_keys:
-                state_attributes = [0] # xtb=0, g09=1
+                state_attributes = [[0.]] # xtb=0, g09=1
                 name = os.path.basename(xyz).split(".xyz")[0]
                 if with_rdkit:
                     try:

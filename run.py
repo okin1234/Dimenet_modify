@@ -63,7 +63,7 @@ def main(hidden_channels=128, out_channels=1 , num_blocks=4, num_bilinear=64, ba
 
     train_dataset = data_to_pyg_form(train_graphs, train_targets)
     val_dataset = data_to_pyg_form(val_graphs, val_targets)
-
+    
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, worker_init_fn=random_state)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
