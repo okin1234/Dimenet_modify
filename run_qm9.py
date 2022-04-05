@@ -19,6 +19,8 @@ from torch_geometric.data import Data, DataLoader
 from warmup_scheduler import GradualWarmupScheduler
 import numpy as np
 import random
+from Dimenet.qm9_dataset import QM9
+import os.path as osp
 
 def data_to_pyg_form(graphs, targets):
     data_list=[]
@@ -38,7 +40,7 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
-    
+
 def model_eval(model, device, loader):
     model.eval()
     error = 0
@@ -50,19 +52,33 @@ def model_eval(model, device, loader):
 
     return error / len(loader.dataset)
 
-def main(hidden_channels=128, out_channels=1 , num_blocks=4, num_bilinear=64, basis_emb_size=8, out_emb_channels=256, num_spherical=7, num_radial=6, cutoff=5.0, max_num_neighbors=32, envelope_exponent=5, num_before_skip=1, num_after_skip=2, num_output_layers=3, act='swish', output_init='GlorotOrthogonal', random_state=1000, batch_size=32, lr=0.001, epochs=100, num_state=1, 
+class MyTransform(object):
+    def __call__(self, data):
+        data.y = data.y[:, target]
+        return data
+
+
+def main(hidden_channels=128, out_channels=1 , num_blocks=4, num_bilinear=64, basis_emb_size=8, out_emb_channels=256, num_spherical=7, num_radial=6, cutoff=5.0, max_num_neighbors=32, envelope_exponent=5, num_before_skip=1, num_after_skip=2, num_output_layers=3, act='swish', output_init='GlorotOrthogonal', random_state=1000, batch_size=32, lr=0.001, epochs=100, target=3, 
          num_xtb_data=None, num_g09_data=None, load=False, g09_data_cut=None, with_rdkit=False, rdkit_rank=10, to_class=False, class_num=5, cut_mode='qcut', onehot=False
         ):
+    targets = ['mu (D)', 'a (a^3_0)', 'e_HOMO (eV)', 'e_LUMO (eV)', 'delta e (eV)', 'R^2 (a^2_0)', 'ZPVE (eV)', 'U_0 (eV)', 'U (eV)', 'H (eV)', 'G (eV)', 'c_v (cal/mol.K)', ]
 
     set_seed(random_state)
 
     if act == 'swish':
         act = swish
+        
+    target=target
     
-    train_graphs, train_targets, val_graphs, val_targets = make_graph_datas(num_xtb_data, num_g09_data, load=load, random_state=random_state, g09_data_cut=g09_data_cut, with_rdkit=with_rdkit, rdkit_rank=rdkit_rank, to_class=to_class, class_num=class_num, cut_mode=cut_mode, onehot=onehot)
-
-    train_dataset = data_to_pyg_form(train_graphs, train_targets)
-    val_dataset = data_to_pyg_form(val_graphs, val_targets)
+    path = osp.join(osp.dirname(osp.realpath(__file__)), '.', 'data', 'QM9', 'original')
+    dataset = QM9(path).shuffle()
+    print('# of graphs:', len(dataset))
+    
+    # Split dataset
+    train_dataset = dataset[:110000]
+    val_dataset = dataset[110000:120000]
+    test_dataset = dataset[120000:]
+    #return(val_dataset)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, worker_init_fn=random_state)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
