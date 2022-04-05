@@ -47,6 +47,7 @@ class DimeNet(torch.nn.Module):
         act: (Callable, optional): The activation funtion.
             (default: :obj:`swish`)
         output_init: Initialization method for the output layer (last layer in output block) (zeros or GlorotOrthogonal)
+        num_state: number of state feature number
     """
 
     def __init__(self, hidden_channels: int, out_channels: int,
@@ -55,7 +56,7 @@ class DimeNet(torch.nn.Module):
                  num_radial, cutoff: float = 5.0, max_num_neighbors: int = 32,
                  envelope_exponent: int = 5, num_before_skip: int = 1,
                  num_after_skip: int = 2, num_output_layers: int = 3,
-                 act: Callable = swish, output_init='zeors'):
+                 act: Callable = swish, output_init='zeors', num_state=1):
         super().__init__()
 
         self.cutoff = cutoff
@@ -66,7 +67,7 @@ class DimeNet(torch.nn.Module):
         self.sbf = SphericalBasisLayer(num_spherical, num_radial, cutoff,
                                        envelope_exponent)
 
-        self.emb = EmbeddingBlock(num_radial, hidden_channels, act)
+        self.emb = EmbeddingBlock(num_radial, hidden_channels, act, num_state)
 
         self.output_blocks = torch.nn.ModuleList([
             OutputBlock(num_radial, hidden_channels, out_emb_channels, out_channels, num_output_layers, act) for _ in range(num_blocks + 1)
@@ -110,7 +111,7 @@ class DimeNet(torch.nn.Module):
         return col, row, idx_i, idx_j, idx_k, idx_kj, idx_ji
 
     def forward(self, batch_data):
-        z, pos, batch = batch_data.x, batch_data.pos, batch_data.batch
+        z, pos, batch, state = batch_data.x, batch_data.pos, batch_data.batch, batch_data.state
         
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch,
                                   max_num_neighbors=self.max_num_neighbors)

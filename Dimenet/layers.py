@@ -102,25 +102,30 @@ class SphericalBasisLayer(torch.nn.Module):
 
 
 class EmbeddingBlock(torch.nn.Module):
-    def __init__(self, num_radial, hidden_channels, act=swish):
+    def __init__(self, num_radial, hidden_channels, act=swish, num_state):
         super().__init__()
         self.act = act
 
         self.emb = Embedding(95, hidden_channels)
         self.lin_rbf = Linear(num_radial, hidden_channels)
-        self.lin = Linear(3 * hidden_channels, hidden_channels)
+        self.lin_state_1 = Linear(num_state, hidden_channels/2)
+        self.lin_state_2 = Linear(hidden_channels/2, hidden_channels)
+        self.lin = Linear(4 * hidden_channels, hidden_channels)
 
         self.reset_parameters()
 
     def reset_parameters(self):
         self.emb.weight.data.uniform_(-sqrt(3), sqrt(3))
         self.lin_rbf.reset_parameters()
+        self.lin_state_1.reset_parameters()
+        self.lin_state_2.reset_parameters()
         self.lin.reset_parameters()
 
-    def forward(self, x, rbf, i, j):
+    def forward(self, x, rbf, i, j, state):
         x = self.emb(x)
         rbf = self.act(self.lin_rbf(rbf))
-        return self.act(self.lin(torch.cat([x[i], x[j], rbf], dim=-1)))
+        state = self.act(self.lin_state_2(self.act(self.lin_state_1(state))))
+        return self.act(self.lin(torch.cat([x[i], x[j], rbf, state], dim=-1)))
 
 
 class ResidualLayer(torch.nn.Module):
