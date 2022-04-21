@@ -1,12 +1,10 @@
-#from Dimenet import *
-#from layers import *
-#from dimenet import *
-#from dataset import *
 from Dimenet import layers
 from Dimenet import dimenet
 from Dimenet import dataset
 from Dimenet.dataset import make_datasets
 from Dimenet.dimenet import DimeNet
+from Dimenet import utils
+from Dimenet.utils import EarlyStopping
 
 import torch
 #from torch.utils.data import DataLoader
@@ -20,6 +18,7 @@ from warmup_scheduler import GradualWarmupScheduler
 import numpy as np
 import random
 from transformers import get_cosine_schedule_with_warmup
+import time
 
 
 class trainer():
@@ -66,9 +65,19 @@ class trainer():
         return train_graphs, train_targets, val_graphs, val_targets
 
 
-    def train(self, batch_size=16, lr=0.001, epochs=100,
+    def train(self, batch_size=16, lr=0.001, epochs=100, model_dict=None, 
              wandb_on=True, wandb_project=None, wandb_name=None, wandb_group=None, wandb_memo=None
             ):
+        if wandb_on:
+            import wandb
+            model_dict['batch_size'] = batch_size
+            model_dict['lr'] = lr
+            model_dict['epochs'] = epochs
+            
+            wandb.init(project=wandb_project, reinit=True, group=wandb_group, notes=wandb_memo, config=model_dict)
+            wandb.run.name = wandb_name
+            wandb.run.save()
+        
         if wandb_name is None:
             wandb_name = 'testing'
 
@@ -98,6 +107,7 @@ class trainer():
         #scheduler = get_cosine_schedule_with_warmup(optim, num_warmup_steps=100, num_training_steps=(len(train_loader)*epochs))
         scheduler = ExponentialLR(optim, gamma=0.96)
         scheduler_warmup = GradualWarmupScheduler(optim, multiplier=1.0, total_epoch=1, after_scheduler=scheduler)
+        early_stopping = EarlyStopping(patience = 5, verbose = True)
 
         best_epoch = None
         best_val_loss = None
@@ -105,6 +115,7 @@ class trainer():
         for epoch in range(epochs):
             loss_all = 0
             step = 0
+            start_time = time.time()
             model.train()
 
             for batch in train_loader:
@@ -120,19 +131,29 @@ class trainer():
 
             train_loss = loss_all / len(train_loader.dataset)
             val_loss = self.model_eval(model, device, val_loader)
-
+            end_time = time.time()
+            running_time = round((end_time - start_time)/60, 2)
+            
             if best_val_loss is None or val_loss <= best_val_loss:
                 best_epoch = epoch+1
                 best_val_loss = val_loss
                 torch.save(model.state_dict(), "./save_model/{0}_{1}_{2}.pt".format(wandb_name, epoch, val_loss))
-            print('Epoch: {:03d}, Train MAE: {:.7f}, Validation MAE: {:.7f}, lr: {:.7f}'.format(epoch+1, train_loss, val_loss, optim.param_groups[0]['lr']))
-            #wandb.log({'Train mae' : train_loss, 'Val mae' : val_loss, 'lr' : optim.param_groups[0]['lr']})
+            print('Epoch: {:03d}, Train MAE: {:.7f}, Validation MAE: {:.7f}, lr: {:.7f}, time: {:.7f}'.format(epoch+1, train_loss, val_loss, optim.param_groups[0]['lr'], running_time))
+            
+            if wandb_on:
+                wandb.log({'Train mae' : train_loss, 'Val mae' : val_loss, 'lr' : optim.param_groups[0]['lr'], 'time' : running_time})
 
             scheduler_warmup.step()
+            early_stopping(val_loss)
+            if early_stopping.early_stop:
+                print("Early stopping")
+                break
 
         print('===================================================================================')
         print('Best Epoch:', best_epoch)
         print('Best Val MAE:', best_val_loss)
+        if wandb_on:
+            wandb.finish()
 
 
     def eval(self, selected_model=None, batch_size=32):
